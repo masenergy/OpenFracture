@@ -202,6 +202,8 @@ public class Fracture : MonoBehaviour
                         // Deactivate the original object
                         this.gameObject.SetActive(false);
 
+                        ScheduleFragmentCleanup();
+
                         // Fire the completion callback
                         if ((this.currentRefractureCount == 0) ||
                             (this.currentRefractureCount > 0 && this.refractureOptions.invokeCallbacks))
@@ -227,6 +229,8 @@ public class Fracture : MonoBehaviour
                 // Deactivate the original object
                 this.gameObject.SetActive(false);
 
+                ScheduleFragmentCleanup();
+
                 // Fire the completion callback
                 if ((this.currentRefractureCount == 0) ||
                     (this.currentRefractureCount > 0 && this.refractureOptions.invokeCallbacks))
@@ -237,6 +241,32 @@ public class Fracture : MonoBehaviour
                     }
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Despawns this fracture's debris once fragmentLifetime has elapsed.
+    ///
+    /// The whole fragment root goes rather than each fragment individually: one Destroy instead of
+    /// a dozen, and it takes the root object with it. That object is otherwise permanent - an empty
+    /// "<name>Fragments" transform left behind for every object ever fractured, which nothing
+    /// cleans up and nothing ever looks at again.
+    ///
+    /// Scheduled once per fracture. Refracturing reuses the same root, so a fragment that breaks
+    /// again does not get a second, earlier deadline.
+    /// </summary>
+    private void ScheduleFragmentCleanup()
+    {
+        // Delayed Destroy is a play mode thing; in the editor Prefracture owns the fragments and
+        // they are meant to persist.
+        if (!Application.isPlaying || fractureOptions.fragmentLifetime <= 0f)
+        {
+            return;
+        }
+
+        if (this.fragmentRoot != null && this.currentRefractureCount == 0)
+        {
+            GameObject.Destroy(this.fragmentRoot, fractureOptions.fragmentLifetime);
         }
     }
 
