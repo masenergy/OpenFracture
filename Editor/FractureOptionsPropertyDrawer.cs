@@ -27,6 +27,7 @@ public class FractureOptionsPropertyDrawer : PropertyDrawer
             EditorGUILayout.PropertyField(property.FindPropertyRelative("textureScale"));
             EditorGUILayout.PropertyField(property.FindPropertyRelative("textureOffset"));
             EditorGUILayout.PropertyField(property.FindPropertyRelative("fragmentLifetime"));
+            EditorGUILayout.PropertyField(property.FindPropertyRelative("fragmentFadeDuration"));
         }
 
         EditorGUILayout.EndFoldoutHeaderGroup();
