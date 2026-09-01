@@ -274,11 +274,6 @@ public static class Fragmenter
 
             var collider = fragment.GetComponent<MeshCollider>();
 
-            // If fragment collisions are disabled, collider will be null
-            collider.sharedMesh = meshes[k];
-            collider.convex = true;
-            collider.sharedMaterial = fragment.GetComponent<Collider>().sharedMaterial;
-
             // Slicing routinely produces slivers - a fragment that is a single flat sheet, or a
             // handful of vertices sitting on one line. A convex hull needs a genuine volume, so
             // PhysX rejects those with "Less than four valid vertices were found" or "input points
@@ -286,10 +281,20 @@ public static class Fragmenter
             // captured stack trace. A busy explosion produces enough of them to be a problem in
             // its own right, and the collider that comes back is unusable regardless.
             //
-            // Cheaper and quieter to notice first. The fragment keeps its renderer and rigidbody
-            // so it still looks and falls right; it just has nothing to collide with, which is a
-            // fair description of a sliver anyway.
-            if (!HasCookableVolume(meshes[k]))
+            // The check has to happen HERE, before the mesh is handed over. Assigning sharedMesh
+            // with convex set is what triggers the cook, so testing afterwards and disabling the
+            // collider is too late - the cook has already run and already failed.
+            //
+            // A skipped fragment keeps its renderer and rigidbody so it still looks and falls
+            // right; it just has nothing to collide with, which is a fair description of a sliver.
+            if (HasCookableVolume(meshes[k]))
+            {
+                // If fragment collisions are disabled, collider will be null
+                collider.sharedMesh = meshes[k];
+                collider.convex = true;
+                collider.sharedMaterial = fragment.GetComponent<Collider>().sharedMaterial;
+            }
+            else
             {
                 collider.enabled = false;
             }
@@ -298,9 +303,26 @@ public static class Fragmenter
             var parentRigidBody = sourceObject.GetComponent<Rigidbody>();
             var rigidBody = fragment.GetComponent<Rigidbody>();
 
+            // Each fragment takes the share of the parent's mass that its share of the parent's
+            // volume suggests.
+            //
+            // Written as a share rather than as the original divide-by-density, because that form
+            // had two ways to produce a number the solver cannot survive. A source mesh whose
+            // bounds have no thickness - which the city models do have - made the divisor zero and
+            // the resulting mass infinite. And a fragment whose bounds came out larger than the
+            // parent's, which slicing artifacts manage, made it heavier than the whole building it
+            // came from. Clamping the share to 0..1 closes both, and costs nothing in the normal
+            // case where the shares already sum to about one.
             var size = fragmentMesh.bounds.size;
-            float density = (parentSize.x * parentSize.y * parentSize.z) / parentMass;
-            rigidBody.mass = (size.x * size.y * size.z) / density;
+
+            float parentVolume = parentSize.x * parentSize.y * parentSize.z;
+            float fragmentVolume = size.x * size.y * size.z;
+
+            float share = parentVolume > 1e-6f
+                ? Mathf.Clamp01(fragmentVolume / parentVolume)
+                : 1f / Mathf.Max(1, meshes.Length);
+
+            rigidBody.mass = Mathf.Max(parentMass * share, 0.001f);
             
             // This code only compiles for the editor
             #if UNITY_EDITOR
