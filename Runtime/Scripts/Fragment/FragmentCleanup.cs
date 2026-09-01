@@ -16,6 +16,11 @@ using UnityEngine;
 /// resting on something makes it sink and jitter as the contact is recomputed each frame, and there
 /// is nothing to gain from simulating debris nobody is going to look at again - so this doubles as
 /// a way to hand the physics back a dozen bodies per building a moment early.
+///
+/// Each piece shrinks around its own geometry rather than around its transform. A fragment's pivot
+/// is not where its geometry sits - the slicer leaves that offset in the mesh - so scaling the
+/// transform alone drags every piece towards its pivot as it shrinks, and a field of debris appears
+/// to slide away as it goes. The position is corrected each frame to hold the mesh centre still.
 /// </summary>
 public class FragmentCleanup : MonoBehaviour
 {
@@ -49,10 +54,23 @@ public class FragmentCleanup : MonoBehaviour
         Transform[] fragments = new Transform[transform.childCount];
         Vector3[] scales = new Vector3[transform.childCount];
 
+        // Where the geometry sits relative to its own transform, and where that lands in the
+        // root's space right now. Holding the second still is what keeps a shrinking piece put.
+        Vector3[] meshCentres = new Vector3[transform.childCount];
+        Vector3[] anchors = new Vector3[transform.childCount];
+
         for (int i = 0; i < transform.childCount; i++)
         {
             fragments[i] = transform.GetChild(i);
             scales[i] = fragments[i].localScale;
+
+            MeshFilter filter = fragments[i].GetComponent<MeshFilter>();
+            meshCentres[i] = filter != null && filter.sharedMesh != null
+                ? filter.sharedMesh.bounds.center
+                : Vector3.zero;
+
+            anchors[i] = fragments[i].localPosition
+                       + fragments[i].localRotation * Vector3.Scale(scales[i], meshCentres[i]);
 
             Rigidbody body = fragments[i].GetComponent<Rigidbody>();
             if (body != null)
@@ -74,10 +92,19 @@ public class FragmentCleanup : MonoBehaviour
             for (int i = 0; i < fragments.Length; i++)
             {
                 // A fragment can still go early - a scene unload, or something destroying it.
-                if (fragments[i] != null)
+                if (fragments[i] == null)
                 {
-                    fragments[i].localScale = scales[i] * remaining;
+                    continue;
                 }
+
+                Vector3 scale = scales[i] * remaining;
+
+                fragments[i].localScale = scale;
+
+                // Scaling moves the geometry towards the pivot by however much it shrank. Put the
+                // transform back by the same amount so the mesh centre does not budge.
+                fragments[i].localPosition = anchors[i]
+                    - fragments[i].localRotation * Vector3.Scale(scale, meshCentres[i]);
             }
 
             yield return null;
