@@ -40,6 +40,11 @@ public class FractureOptions
              "collider and a rigidbody that goes on costing after it has stopped being interesting.")]
     public float fragmentLifetime;
 
+    [Tooltip("How much of the lifetime is spent shrinking the fragments away at the end, so debris " +
+             "does not vanish mid-shot. Zero removes them instantly. Ignored if Fragment Lifetime " +
+             "is zero.")]
+    public float fragmentFadeDuration;
+
     public FractureOptions()
     {
         this.fragmentCount = 10;
@@ -54,5 +59,9 @@ public class FractureOptions
 
         // Zero, so existing users keep the behaviour they have.
         this.fragmentLifetime = 0f;
+
+        // Only meaningful once a lifetime is set, so a second of grace is a kinder default than a
+        // pop for anyone who turns despawning on.
+        this.fragmentFadeDuration = 1f;
     }
 }

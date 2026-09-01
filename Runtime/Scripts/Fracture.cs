@@ -245,10 +245,11 @@ public class Fracture : MonoBehaviour
     }
 
     /// <summary>
-    /// Despawns this fracture's debris once fragmentLifetime has elapsed.
+    /// Despawns this fracture's debris once fragmentLifetime has elapsed, shrinking it away over
+    /// the last fragmentFadeDuration seconds so it does not vanish mid-shot.
     ///
-    /// The whole fragment root goes rather than each fragment individually: one Destroy instead of
-    /// a dozen, and it takes the root object with it. That object is otherwise permanent - an empty
+    /// The whole fragment root is handed over rather than each fragment individually, and it is the
+    /// root that gets destroyed at the end. That object is otherwise permanent - an empty
     /// "<name>Fragments" transform left behind for every object ever fractured, which nothing
     /// cleans up and nothing ever looks at again.
     ///
@@ -257,8 +258,8 @@ public class Fracture : MonoBehaviour
     /// </summary>
     private void ScheduleFragmentCleanup()
     {
-        // Delayed Destroy is a play mode thing; in the editor Prefracture owns the fragments and
-        // they are meant to persist.
+        // A play mode thing; in the editor Prefracture owns the fragments and they are meant to
+        // persist.
         if (!Application.isPlaying || fractureOptions.fragmentLifetime <= 0f)
         {
             return;
@@ -266,7 +267,9 @@ public class Fracture : MonoBehaviour
 
         if (this.fragmentRoot != null && this.currentRefractureCount == 0)
         {
-            GameObject.Destroy(this.fragmentRoot, fractureOptions.fragmentLifetime);
+            var cleanup = this.fragmentRoot.AddComponent<FragmentCleanup>();
+
+            cleanup.Begin(fractureOptions.fragmentLifetime, fractureOptions.fragmentFadeDuration);
         }
     }
 
