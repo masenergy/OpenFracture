@@ -197,6 +197,27 @@ public static class Fragmenter
     }
 
     /// <summary>
+    /// True if a mesh has enough of a volume for PhysX to build a convex hull from it.
+    ///
+    /// The threshold is deliberately tiny - this is only trying to catch degenerate output, not to
+    /// second guess thin fragments. A wall panel is thin and perfectly cookable; a sheet with no
+    /// thickness at all is not.
+    /// </summary>
+    private static bool HasCookableVolume(Mesh mesh)
+    {
+        const float minExtent = 1e-5f;
+
+        if (mesh == null || mesh.vertexCount < 4)
+        {
+            return false;
+        }
+
+        Vector3 extents = mesh.bounds.extents;
+
+        return extents.x > minExtent && extents.y > minExtent && extents.z > minExtent;
+    }
+
+    /// <summary>
     /// Creates a new GameObject from the fragment data
     /// </summary>
     /// <param name="fragmentMeshData">Geometry of the fragment produced by the slicer</param>
@@ -257,6 +278,21 @@ public static class Fragmenter
             collider.sharedMesh = meshes[k];
             collider.convex = true;
             collider.sharedMaterial = fragment.GetComponent<Collider>().sharedMaterial;
+
+            // Slicing routinely produces slivers - a fragment that is a single flat sheet, or a
+            // handful of vertices sitting on one line. A convex hull needs a genuine volume, so
+            // PhysX rejects those with "Less than four valid vertices were found" or "input points
+            // appers to be coplanar": one logged error per fragment per fracture, each carrying a
+            // captured stack trace. A busy explosion produces enough of them to be a problem in
+            // its own right, and the collider that comes back is unusable regardless.
+            //
+            // Cheaper and quieter to notice first. The fragment keeps its renderer and rigidbody
+            // so it still looks and falls right; it just has nothing to collide with, which is a
+            // fair description of a sliver anyway.
+            if (!HasCookableVolume(meshes[k]))
+            {
+                collider.enabled = false;
+            }
 
             // Compute mass of the sliced object by dividing mesh bounds by density
             var parentRigidBody = sourceObject.GetComponent<Rigidbody>();
