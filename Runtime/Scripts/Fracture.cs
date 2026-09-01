@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
@@ -22,6 +23,14 @@ public class Fracture : MonoBehaviour
     /// Collector object that stores the produced fragments
     /// </summary>
     private GameObject fragmentRoot;
+
+    /// <summary>
+    /// True once a physics trigger has queued a fracture that has not run yet. Several contacts
+    /// can land on one object in a single step - an explosion touching three of its colliders, or
+    /// a projectile and its blast - and without this each would queue its own fracture of an object
+    /// that is about to be deactivated anyway.
+    /// </summary>
+    private bool fractureQueued = false;
 
     [ContextMenu("Print Mesh Info")]
     public void PrintMeshInfo()
@@ -82,8 +91,7 @@ public class Fracture : MonoBehaviour
                 if (collisionForce > triggerOptions.minimumCollisionForce &&
                    (triggerOptions.filterCollisionsByTag && tagAllowed))
                 {
-                    callbackOptions.CallOnFracture(contact.otherCollider, gameObject, contact.point);
-                    this.ComputeFracture();
+                    QueueFracture(contact.otherCollider, contact.point);
                 }
             }
         }
@@ -98,8 +106,7 @@ public class Fracture : MonoBehaviour
 
             if (triggerOptions.filterCollisionsByTag && tagAllowed)
             {
-                callbackOptions.CallOnFracture(collider, gameObject, transform.position);
-                this.ComputeFracture();
+                QueueFracture(collider, transform.position);
             }
         }
     }
@@ -114,6 +121,45 @@ public class Fracture : MonoBehaviour
                 this.ComputeFracture();
             }
         }
+    }
+
+    /// <summary>
+    /// Defers a physics-triggered fracture to the next frame.
+    ///
+    /// OnCollisionEnter and OnTriggerEnter are dispatched from inside PhysX's contact callback, and
+    /// a fracture is not a small thing to do from there: it builds meshes, spawns a GameObject per
+    /// fragment with a rigidbody and a freshly cooked convex collider on each, and deactivates the
+    /// source object. That rebuilds a chunk of the physics scene while the solver is walking it.
+    ///
+    /// One object usually survives it. A blast that catches a dozen at once does not - and the
+    /// symptom is a native crash with no managed stack, typically preceded by PhysX complaining
+    /// that it could not cook a hull from one of the fragments. Waiting a frame costs nothing
+    /// visually and moves all of it onto a scene the solver has finished with.
+    /// </summary>
+    private void QueueFracture(Collider otherCollider, Vector3 point)
+    {
+        if (fractureQueued)
+        {
+            return;
+        }
+
+        fractureQueued = true;
+
+        StartCoroutine(FractureNextFrame(otherCollider, point));
+    }
+
+    private IEnumerator FractureNextFrame(Collider otherCollider, Vector3 point)
+    {
+        yield return null;
+
+        // The object can be gone by now - destroyed by whatever hit it, or by a scene change.
+        if (this == null)
+        {
+            yield break;
+        }
+
+        callbackOptions.CallOnFracture(otherCollider, gameObject, point);
+        this.ComputeFracture();
     }
 
     /// <summary>
@@ -156,6 +202,8 @@ public class Fracture : MonoBehaviour
                         // Deactivate the original object
                         this.gameObject.SetActive(false);
 
+                        ScheduleFragmentCleanup();
+
                         // Fire the completion callback
                         if ((this.currentRefractureCount == 0) ||
                             (this.currentRefractureCount > 0 && this.refractureOptions.invokeCallbacks))
@@ -181,6 +229,8 @@ public class Fracture : MonoBehaviour
                 // Deactivate the original object
                 this.gameObject.SetActive(false);
 
+                ScheduleFragmentCleanup();
+
                 // Fire the completion callback
                 if ((this.currentRefractureCount == 0) ||
                     (this.currentRefractureCount > 0 && this.refractureOptions.invokeCallbacks))
@@ -191,6 +241,32 @@ public class Fracture : MonoBehaviour
                     }
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Despawns this fracture's debris once fragmentLifetime has elapsed.
+    ///
+    /// The whole fragment root goes rather than each fragment individually: one Destroy instead of
+    /// a dozen, and it takes the root object with it. That object is otherwise permanent - an empty
+    /// "<name>Fragments" transform left behind for every object ever fractured, which nothing
+    /// cleans up and nothing ever looks at again.
+    ///
+    /// Scheduled once per fracture. Refracturing reuses the same root, so a fragment that breaks
+    /// again does not get a second, earlier deadline.
+    /// </summary>
+    private void ScheduleFragmentCleanup()
+    {
+        // Delayed Destroy is a play mode thing; in the editor Prefracture owns the fragments and
+        // they are meant to persist.
+        if (!Application.isPlaying || fractureOptions.fragmentLifetime <= 0f)
+        {
+            return;
+        }
+
+        if (this.fragmentRoot != null && this.currentRefractureCount == 0)
+        {
+            GameObject.Destroy(this.fragmentRoot, fractureOptions.fragmentLifetime);
         }
     }
 

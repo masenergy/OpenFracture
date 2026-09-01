@@ -35,6 +35,11 @@ public class FractureOptions
     [Tooltip("Offset to apply to texture coordinates")]
     public Vector2 textureOffset;
 
+    [Tooltip("Seconds before the fragments of one fracture are despawned. Zero keeps them forever. " +
+             "Debris is cheap to make and expensive to keep - every fragment is a renderer, a " +
+             "collider and a rigidbody that goes on costing after it has stopped being interesting.")]
+    public float fragmentLifetime;
+
     public FractureOptions()
     {
         this.fragmentCount = 10;
@@ -46,5 +51,8 @@ public class FractureOptions
         this.insideMaterial = null;
         this.textureScale = Vector2.one;
         this.textureOffset = Vector2.zero;
+
+        // Zero, so existing users keep the behaviour they have.
+        this.fragmentLifetime = 0f;
     }
 }

@@ -8,6 +8,26 @@ using UnityEngine;
 public sealed class ConstrainedTriangulator : Triangulator
 {
     /// <summary>
+    /// Set once a termination guard has fired for this triangulation. The guards below can trip
+    /// many times over a single mesh - once per constraint, and a fracture triangulates many
+    /// cross sections - and an unthrottled Debug.LogWarning in that position is its own denial of
+    /// service: enough console entries in one frame will lock the editor up just as thoroughly as
+    /// the loop this is here to escape.
+    /// </summary>
+    private bool warnedAboutTermination = false;
+
+    private void WarnOnce(string message)
+    {
+        if (warnedAboutTermination)
+        {
+            return;
+        }
+
+        warnedAboutTermination = true;
+        Debug.LogWarning($"ConstrainedTriangulator: {message} Triangulation continues; the affected fragment may be slightly non-Delaunay. Further occurrences in this triangulation are not logged.");
+    }
+
+    /// <summary>
     /// Given an edge E12, E23, E31, this returns the first vertex for that edge (V1, V2, V3, respectively)
     /// </summary>
     /// <value></value>
@@ -160,8 +180,23 @@ public sealed class ConstrainedTriangulator : Triangulator
         int edgeIndex = startEdge.t1Edge;
         int lastTriangle = t;
         bool finalTriangleFound = false;
+
+        // A straight line crosses any triangle at most once, so a walk that visits more triangles
+        // than exist is not making progress - it is cycling. That happens when the geometry is
+        // degenerate enough for the floating point intersection tests to disagree with each other
+        // from one triangle to the next, at which point the walk can be handed back a triangle it
+        // has already left. Without this the loop never ends: it is on the main thread, inside
+        // OnCollisionEnter, so the editor simply stops responding with nothing in the log.
+        int trianglesRemaining = triangleCount;
+
         while (!finalTriangleFound)
         {
+            if (trianglesRemaining-- <= 0)
+            {
+                WarnOnce("edge walk visited more triangles than exist, so it was cycling.");
+                break;
+            }
+
             // Cross the last intersecting edge and inspect the next triangle
             lastTriangle = t;
             t = triangulation[t, edgeIndex];
@@ -199,8 +234,7 @@ public sealed class ConstrainedTriangulator : Triangulator
             }
             else
             {
-                // Shouldn't reach this point
-                Debug.LogWarning("Failed to find final triangle, exiting early.");
+                WarnOnce("failed to find the final triangle of an edge walk.");
                 break;
             }
         }
@@ -373,10 +407,30 @@ public sealed class ConstrainedTriangulator : Triangulator
     {
         // Iterate over the list of newly created edges and swap non-constraint diagonals until no more swaps take place
         bool swapOccurred = true;
-        int counter = 0;
+
+        // ...or until this many passes, whichever comes first.
+        //
+        // SwapTest is exact float arithmetic with no tolerance, and its final branch returns
+        // `sinAB < 0`. Four cocircular points sit exactly on that boundary, so the test can call
+        // for a flip, and then call for a flip again on the result - swapOccurred is set on every
+        // pass and the loop never ends. Cocircular points are not a corner case in this domain:
+        // building geometry is full of axis aligned faces and repeated window quads, and the
+        // fracture plane is chosen at random, so a cross section lands on one sooner or later.
+        //
+        // Restoration converges in a handful of passes on well conditioned input, so a cap of one
+        // pass per triangle is far above anything legitimate and only ever trips on the pathology.
+        // Stopping early leaves a triangulation that is valid but not perfectly Delaunay, which is
+        // invisible on a fragment of rubble - and is the whole of the cost of not hanging.
+        int passesRemaining = triangleCount;
+
         while (swapOccurred)
         {
-            counter++;
+            if (passesRemaining-- <= 0)
+            {
+                WarnOnce("diagonal flipping did not converge, most likely on cocircular points.");
+                break;
+            }
+
             swapOccurred = false;
 
             for (int i = 0; i < newEdges.Count; i++)
