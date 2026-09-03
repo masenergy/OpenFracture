@@ -205,16 +205,80 @@ public static class Fragmenter
     /// </summary>
     private static bool HasCookableVolume(Mesh mesh)
     {
-        const float minExtent = 1e-5f;
-
         if (mesh == null || mesh.vertexCount < 4)
         {
             return false;
         }
 
-        Vector3 extents = mesh.bounds.extents;
+        // The bounding box is not the test. A sliver lying at an angle has a non-zero extent on
+        // all three axes and is still a flat sheet - which is exactly what PhysX means by "Simplex
+        // input points appers to be coplanar" - so it passed, the cook failed anyway, and the
+        // collider that came back was never usable. Look for four vertices that actually span a
+        // volume instead.
+        Vector3[] vertices = mesh.vertices;
 
-        return extents.x > minExtent && extents.y > minExtent && extents.z > minExtent;
+        // Relative to the mesh, so this means the same thing for a lamp post and a skyscraper.
+        // PhysX's own planar tolerance is relative in the same way.
+        float scale = mesh.bounds.size.magnitude;
+
+        if (scale <= 0f)
+        {
+            return false;
+        }
+
+        float tolerance = scale * 1e-4f;
+
+        // B: far enough from A to give a direction.
+        Vector3 a = vertices[0];
+        Vector3 ab = Vector3.zero;
+        int i = 1;
+
+        for (; i < vertices.Length; i++)
+        {
+            ab = vertices[i] - a;
+
+            if (ab.magnitude > tolerance)
+            {
+                break;
+            }
+        }
+
+        if (i == vertices.Length)
+        {
+            return false;
+        }
+
+        // C: off that line, giving a plane. A cross product is an area, hence the extra factor of
+        // scale on what it is compared against.
+        Vector3 normal = Vector3.zero;
+
+        for (i++; i < vertices.Length; i++)
+        {
+            normal = Vector3.Cross(ab, vertices[i] - a);
+
+            if (normal.magnitude > tolerance * scale)
+            {
+                break;
+            }
+        }
+
+        if (i == vertices.Length)
+        {
+            return false;
+        }
+
+        normal.Normalize();
+
+        // D: off that plane. Without one, every vertex is coplanar and there is no hull to cook.
+        for (i++; i < vertices.Length; i++)
+        {
+            if (Mathf.Abs(Vector3.Dot(vertices[i] - a, normal)) > tolerance)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
